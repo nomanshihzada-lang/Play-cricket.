@@ -1,0 +1,302 @@
+require "import"
+import "android.app.*"
+import "android.widget.*"
+import "android.view.*"
+import "android.graphics.*"
+import "android.content.*"
+import "android.media.MediaPlayer"
+import "android.net.Uri"
+
+-- 1. ऑडियो पैथ्स (Audio Paths)
+local audio_paths = {
+  crowd = "", -- (अभी के लिए कमिंग सून)
+  six = "/storage/emulated/0/解说/Tools/play cricket/6 sound. .mp3",
+  four = "/storage/emulated/0/解说/Tools/play cricket/4 sound.mp3",
+  out = "/storage/emulated/0/解说/Tools/play cricket/out.mp3.aac",
+  three = "/storage/emulated/0/解说/Tools/play cricket/3.mp3",
+  two = "/storage/emulated/0/解说/Tools/play cricket/2.mp3",
+  one = "/storage/emulated/0/解说/Tools/play cricket/1 runs.mp3",
+  dot = "/storage/emulated/0/解说/Tools/play cricket/0.mp3"
+}
+
+-- 2. ग्लोबल वेरिएबल्स और स्टेट्स
+local target = 0
+local score = 0
+local balls = 0
+local wickets = 0
+local max_balls = 30
+local max_wickets = 1
+
+local match_stats = {dots = 0, ones = 0, twos = 0, threes = 0, fours = 0, sixes = 0}
+local lb = {played = 0, won = 0, lost = 0, total_runs = 0}
+
+-- 3. साउंड प्लेयर्स सेटअप
+local is_crowd_on = false 
+local crowd_player = nil
+
+-- हर एक्शन के लिए फ्रेश साउंड प्लेयर
+local function playActionSound(path)
+  if path and path ~= "" then
+    pcall(function()
+      local player = MediaPlayer()
+      player.setDataSource(path)
+      player.prepare()
+      player.start()
+      player.setOnCompletionListener(MediaPlayer.OnCompletionListener{
+        onCompletion = function(mp) mp.release() end
+      })
+    end)
+  end
+end
+
+-- 4. डायलॉग और कंटेनर सेटअप
+local dlg = AlertDialog.Builder(service)
+local mainContainer = LinearLayout(service)
+mainContainer.setOrientation(LinearLayout.VERTICAL)
+mainContainer.setLayoutParams(ViewGroup.LayoutParams(-1, -1))
+mainContainer.setBackgroundColor(0xFFF5F5F5)
+dlg.setView(mainContainer)
+
+local myDialog = dlg.create()
+myDialog.getWindow().setType(2032) -- TYPE_ACCESSIBILITY_OVERLAY
+
+-- 5. लेआउट्स
+local mainMenuLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, id="mainTitle", text="Play Cricket", textSize="30sp", textColor="#000000", layout_marginBottom="40dp" },
+  { Button, id="btnStartGame", text="Start Match", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnSettings", text="Settings", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnExit", text="Exit Tool (0)", layout_width="fill", textSize="18sp" }
+}
+
+local langLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, text="Select Commentary Language", textSize="22sp", textColor="#000000", layout_marginBottom="30dp" },
+  { Button, id="btnLangEng", text="English", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnLangUrdu", text="Urdu / India (Coming Soon)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnLangBack", text="Back", layout_width="fill", textSize="18sp" }
+}
+
+local settingsLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, text="Settings", textSize="26sp", textColor="#000000", layout_marginBottom="30dp" },
+  { Button, id="btnToggleCrowd", text="Crowd Sound (Coming Soon)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnLeaderboard", text="Leaderboard", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnAbout", text="About", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnSettingsBack", text="Back", layout_width="fill", textSize="18sp" }
+}
+
+local aboutLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, id="aboutTitle", text="About Play Cricket", textSize="26sp", textColor="#000000", layout_marginBottom="15dp" },
+  { TextView, text="Play Cricket is an immersive, fully accessible audio cricket simulation game. Experience the thrill of the pitch with seamless screen reader support, realistic audio feedback, and dynamic gameplay mechanics.\n\nDeveloped By: Numan Khan\nVersion: 1.0", textSize="16sp", textColor="#333333", layout_marginBottom="25dp", gravity="center" },
+  { Button, id="btnYouTube", text="Social Media Support", layout_width="fill", textSize="18sp", layout_marginBottom="10dp" },
+  { Button, id="btnFeedback", text="Feedback (Numan Khan)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnAboutBack", text="Back to Settings", layout_width="fill", textSize="18sp" }
+}
+
+local leaderboardLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, text="Leaderboard", textSize="26sp", textColor="#000000", layout_marginBottom="30dp" },
+  { TextView, id="lbStatsText", text="", textSize="18sp", textColor="#333333", layout_marginBottom="30dp" },
+  { Button, id="btnLbBack", text="Back to Settings", layout_width="fill", textSize="18sp" }
+}
+
+local gameLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp",
+  { TextView, id="gameScoreText", text="Score: 0/0", textSize="24sp", textColor="#000000" },
+  { TextView, id="gameBallsText", text="Balls: 0/30", textSize="18sp", textColor="#333333", layout_marginTop="5dp" },
+  { TextView, id="gameTargetText", text="Target: 0", textSize="18sp", textColor="#D32F2F", layout_marginTop="5dp" },
+  { TextView, id="gameStatusText", text="Match Started!", textSize="16sp", textColor="#2E7D32", layout_marginTop="15dp", layout_marginBottom="20dp" },
+  { LinearLayout, orientation="horizontal", layout_width="fill", layout_height="wrap", gravity="center", layout_marginBottom="20dp",
+    { Button, id="btnA", text="A", layout_weight="1" },
+    { Button, id="btnX", text="X", layout_weight="1" },
+    { Button, id="btnC", text="C", layout_weight="1" }
+  },
+  { Button, id="btnGameBack", text="Back to Menu", layout_width="fill", textSize="18sp" }
+}
+
+local postMatchLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, id="pmResultText", text="Result", textSize="26sp", textColor="#000000", layout_marginBottom="20dp" },
+  { TextView, id="pmDetailText", text="", textSize="18sp", textColor="#333333", layout_marginBottom="30dp" },
+  { Button, id="btnPmMenu", text="Main Menu", layout_width="fill", textSize="18sp" }
+}
+
+-- 6. नेविगेशन और फंक्शन्स
+local function changeScreen(layout_table)
+  mainContainer.removeAllViews()
+  mainContainer.addView(loadlayout(layout_table))
+end
+
+local showMainMenu, showLangMenu, showSettings, showAbout, showLeaderboard, showGame, showPostMatch
+
+function showMainMenu()
+  changeScreen(mainMenuLayout)
+  if mainTitle then mainTitle.getPaint().setFakeBoldText(true) end
+  
+  if service then service.speak("Main Menu. Play Cricket.") end
+  
+  btnStartGame.onClick = function() showLangMenu() end
+  btnSettings.onClick = function() showSettings() end
+  btnExit.onClick = function() myDialog.dismiss() end
+end
+
+function showLangMenu()
+  changeScreen(langLayout)
+  btnLangEng.onClick = function() showGame() end
+  btnLangUrdu.onClick = function() if service then service.speak("Urdu and India commentary coming soon.") end end
+  btnLangBack.onClick = function() showMainMenu() end
+end
+
+function showSettings()
+  changeScreen(settingsLayout)
+  
+  btnToggleCrowd.onClick = function()
+    if service then service.speak("Crowd sound is coming soon.") end
+  end
+  
+  btnLeaderboard.onClick = function() showLeaderboard() end
+  btnAbout.onClick = function() showAbout() end
+  btnSettingsBack.onClick = function() showMainMenu() end
+end
+
+function showAbout()
+  changeScreen(aboutLayout)
+  if aboutTitle then aboutTitle.getPaint().setFakeBoldText(true) end
+  if service then service.speak("About Developer.") end
+  
+  -- YouTube लिंक ओपन करने का कोड और ऐप क्लोज करना
+  btnYouTube.onClick = function()
+    pcall(function()
+      local intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://youtube.com/@internationalcricketupdate-r1l?si=SzaPRa9-ApPxJXHL"))
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      service.startActivity(intent)
+    end)
+    myDialog.dismiss() -- यहाँ से ऐप क्लोज हो जाएगी
+  end
+  
+  -- Feedback (WhatsApp) ओपन करने का कोड और ऐप क्लोज करना
+  btnFeedback.onClick = function()
+    pcall(function()
+      local intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=+923145406759&text=Hi%20Numan%20Khan,%20I%20want%20to%20give%20feedback%20about%20Play%20Cricket."))
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      service.startActivity(intent)
+    end)
+    myDialog.dismiss() -- यहाँ से ऐप क्लोज हो जाएगी
+  end
+  
+  btnAboutBack.onClick = function() showSettings() end
+end
+
+function showLeaderboard()
+  changeScreen(leaderboardLayout)
+  lbStatsText.setText("Matches Played: " .. lb.played .. "\nMatches Won: " .. lb.won .. "\nMatches Lost: " .. lb.lost .. "\nTotal Runs Scored: " .. lb.total_runs)
+  btnLbBack.onClick = function() showSettings() end
+end
+
+function showPostMatch(result_msg)
+  changeScreen(postMatchLayout)
+  pmResultText.setText(result_msg)
+  
+  local stats_string = "Match Stats:\n\n" ..
+                       "Sixes (6s): " .. match_stats.sixes .. "\n" ..
+                       "Fours (4s): " .. match_stats.fours .. "\n" ..
+                       "Threes (3s): " .. match_stats.threes .. "\n" ..
+                       "Twos (2s): " .. match_stats.twos .. "\n" ..
+                       "Singles (1s): " .. match_stats.ones .. "\n" ..
+                       "Dot Balls (0s): " .. match_stats.dots
+                       
+  pmDetailText.setText(stats_string)
+  if service then service.speak(result_msg .. ". Check screen for detailed stats.") end
+  btnPmMenu.onClick = function() showMainMenu() end
+end
+
+function showGame()
+  score = 0 balls = 0 wickets = 0
+  target = math.random(35, 75)
+  match_stats = {dots = 0, ones = 0, twos = 0, threes = 0, fours = 0, sixes = 0}
+  
+  changeScreen(gameLayout)
+  
+  gameTargetText.setText("Target: " .. target)
+  gameScoreText.setText("Score: 0/0")
+  gameBallsText.setText("Balls: 0/30")
+  gameStatusText.setText("English Commentary Started! Target is " .. target)
+  
+  if service then service.speak("Match Started! Target is " .. target .. " runs.") end
+  
+  local function updateGameUI(msg)
+    gameScoreText.setText("Score: " .. score .. "/" .. wickets)
+    gameBallsText.setText("Balls: " .. balls .. "/30")
+    gameStatusText.setText(msg)
+    if service then service.speak(msg .. " Score is " .. score) end
+    
+    if score >= target then
+      lb.played = lb.played + 1 lb.won = lb.won + 1 lb.total_runs = lb.total_runs + score
+      showPostMatch("You Won! Target Chased.")
+    elseif wickets >= max_wickets or balls >= max_balls then
+      lb.played = lb.played + 1 lb.lost = lb.lost + 1 lb.total_runs = lb.total_runs + score
+      showPostMatch("Game Over! You Lost.")
+    end
+  end
+
+  local function processBall(result)
+    balls = balls + 1
+    if result == "Wicket" then
+      wickets = wickets + 1
+      playActionSound(audio_paths.out)
+      updateGameUI("Oh no! You are OUT!")
+    else
+      score = score + result
+      if result == 6 then 
+        match_stats.sixes = match_stats.sixes + 1
+        playActionSound(audio_paths.six)
+      elseif result == 4 then 
+        match_stats.fours = match_stats.fours + 1
+        playActionSound(audio_paths.four) 
+      elseif result == 3 then 
+        match_stats.threes = match_stats.threes + 1
+        playActionSound(audio_paths.three)
+      elseif result == 2 then 
+        match_stats.twos = match_stats.twos + 1
+        playActionSound(audio_paths.two)
+      elseif result == 1 then 
+        match_stats.ones = match_stats.ones + 1
+        playActionSound(audio_paths.one)
+      elseif result == 0 then 
+        match_stats.dots = match_stats.dots + 1 
+        playActionSound(audio_paths.dot)
+      end
+      updateGameUI("You scored " .. result .. " runs.")
+    end
+  end
+
+  btnA.onClick = function()
+    local outcomes = {6, 4, "Wicket"}
+    processBall(outcomes[math.random(1, #outcomes)])
+  end
+
+  btnX.onClick = function() processBall(0) end
+
+  btnC.onClick = function()
+    local outcomes = {1, 2, 3, 4, "Wicket"}
+    processBall(outcomes[math.random(1, #outcomes)])
+  end
+  
+  btnGameBack.onClick = function() showMainMenu() end
+end
+
+-- 7. ऐप स्टार्ट करना
+myDialog.show()
+showMainMenu()
+
+myDialog.setOnKeyListener(DialogInterface.OnKeyListener{
+  onKey = function(dialog, keyCode, event)
+    if keyCode == KeyEvent.KEYCODE_0 and event.getAction() == KeyEvent.ACTION_UP then
+      myDialog.dismiss()
+      return true
+    end
+    return false
+  end
+})
