@@ -8,7 +8,7 @@ import "android.media.MediaPlayer"
 import "android.net.Uri"
 import "android.os.Vibrator"
 
--- 1. ऑडियो पैथ्स (English vs Urdu)
+-- 1. ऑडियो पैथ्स (English vs Urdu & Crowd Song)
 local current_language = "en"
 local audio_paths = {
   en = {
@@ -18,8 +18,7 @@ local audio_paths = {
     three = "/storage/emulated/0/解说/Tools/play cricket/3.mp3",
     two = "/storage/emulated/0/解说/Tools/play cricket/2.mp3",
     one = "/storage/emulated/0/解说/Tools/play cricket/1 runs.mp3",
-    dot = "/storage/emulated/0/解说/Tools/play cricket/0.mp3",
-    crowd = "/storage/emulated/0/解说/Tools/play cricket/crowd.mp3" -- Crowd Sound
+    dot = "/storage/emulated/0/解说/Tools/play cricket/0.mp3"
   },
   ur = {
     six = "/storage/emulated/0/解说/Tools/play cricket/6runs.12 in urdu.mp3",
@@ -28,9 +27,9 @@ local audio_paths = {
     three = "/storage/emulated/0/解说/Tools/play cricket/3runs in urdu.mp3",
     two = "/storage/emulated/0/解说/Tools/play cricket/2runs in urdu.mp3",
     one = "/storage/emulated/0/解说/Tools/play cricket/1run.11 in urdu.mp3",
-    dot = "/storage/emulated/0/解说/Tools/play cricket/dod ball.3 in urdu.mp3",
-    crowd = "/storage/emulated/0/解说/Tools/play cricket/crowd.mp3" -- Crowd sound same for both
-  }
+    dot = "/storage/emulated/0/解说/Tools/play cricket/dod ball.3 in urdu.mp3"
+  },
+  crowd_path = "/storage/emulated/0/解说/Tools/play cricket/Crowd song..mp3"
 }
 
 -- 2. 16 Opponents (Bots)
@@ -53,7 +52,7 @@ local max_wickets = 10 -- 10 Wickets Logic
 local match_stats = {dots = 0, ones = 0, twos = 0, threes = 0, fours = 0, sixes = 0}
 local lb = {played = 0, won = 0, lost = 0, total_runs = 0}
 
--- SharedPreferences for Data Saving (Leaderboard & Match)
+-- SharedPreferences for Data Saving (Leaderboard & Match State)
 local prefs = service.getSharedPreferences("PlayCricketData_Numan", Context.MODE_PRIVATE)
 local vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)
 
@@ -77,7 +76,7 @@ end
 
 loadData() 
 
--- Save Current Match
+-- Save Current Match State
 local function saveCurrentMatch()
   local editor = prefs.edit()
   editor.putInt("saved_score", score)
@@ -102,26 +101,39 @@ end
 local is_crowd_on = false 
 local crowd_player = nil
 
-local function toggleCrowd()
-  if is_crowd_on then
-    if crowd_player then
+local function stopCrowd()
+  if crowd_player then
+    pcall(function()
       crowd_player.stop()
       crowd_player.release()
-      crowd_player = nil
-    end
-    is_crowd_on = false
-    if service then service.speak("Crowd sound turned off.") end
-  else
+    end)
+    crowd_player = nil
+  end
+  is_crowd_on = false
+end
+
+-- Crowd strictly starts ONLY when match starts
+local function startCrowd()
+  if not is_crowd_on then
     pcall(function()
       crowd_player = MediaPlayer()
-      crowd_player.setDataSource(audio_paths.en.crowd)
+      crowd_player.setDataSource(audio_paths.crowd_path)
       crowd_player.setLooping(true)
-      crowd_player.setVolume(0.3, 0.3)
+      crowd_player.setVolume(0.2, 0.2) -- Strict 20% Volume Control
       crowd_player.prepare()
       crowd_player.start()
       is_crowd_on = true
-      if service then service.speak("Crowd sound turned on.") end
     end)
+  end
+end
+
+local function toggleCrowd()
+  if is_crowd_on then
+    stopCrowd()
+    if service then service.speak("Crowd sound turned off.") end
+  else
+    startCrowd()
+    if service then service.speak("Crowd sound turned on.") end
   end
 end
 
@@ -157,7 +169,7 @@ dlg.setView(mainContainer)
 local myDialog = dlg.create()
 myDialog.getWindow().setType(2032) -- TYPE_ACCESSIBILITY_OVERLAY
 
--- 6. लेआउट्स (Sare purane layouts wapas)
+-- 6. लेआउट्स (Original 100% complete layouts)
 local mainMenuLayout = {
   LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
   { TextView, id="mainTitle", text="Play Cricket", textSize="30sp", textColor="#000000", layout_marginBottom="40dp" },
@@ -239,6 +251,7 @@ local postMatchLayout = {
   LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
   { TextView, id="pmResultText", text="Result", textSize="26sp", textColor="#000000", layout_marginBottom="20dp" },
   { TextView, id="pmDetailText", text="", textSize="18sp", textColor="#333333", layout_marginBottom="30dp" },
+  { Button, id="btnPlayAgain", text="Play Again", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
   { Button, id="btnPmMenu", text="Main Menu", layout_width="fill", textSize="18sp" }
 }
 
@@ -251,6 +264,7 @@ end
 local showMainMenu, showLangMenu, showOpponentMenu, showOversMenu, showSettings, showAbout, showLeaderboard, showGame, showPostMatch
 
 function showMainMenu()
+  stopCrowd() -- Ensures crowd sound stops when returning to Main Menu
   changeScreen(mainMenuLayout)
   if mainTitle then mainTitle.getPaint().setFakeBoldText(true) end
   if service then service.speak("Main Menu. Play Cricket.") end
@@ -283,7 +297,7 @@ function showMainMenu()
   
   btnSettings.onClick = function() showSettings() end
   btnExit.onClick = function() 
-    if is_crowd_on and crowd_player then crowd_player.release() end
+    stopCrowd()
     myDialog.dismiss() 
   end
 end
@@ -367,12 +381,29 @@ end
 
 function showLeaderboard()
   changeScreen(leaderboardLayout)
-  lbStatsText.setText("Matches Played: " .. lb.played .. "\nMatches Won: " .. lb.won .. "\nMatches Lost: " .. lb.lost .. "\nTotal Runs Scored: " .. lb.total_runs)
+  
+  local win_rate = 0
+  local avg_runs = 0
+  if lb.played > 0 then
+    win_rate = math.floor((lb.won / lb.played) * 100)
+    avg_runs = math.floor(lb.total_runs / lb.played)
+  end
+  
+  lbStatsText.setText(
+    "Matches Played: " .. lb.played .. 
+    "\nMatches Won: " .. lb.won .. 
+    "\nMatches Lost: " .. lb.lost .. 
+    "\nWin Rate: " .. win_rate .. "%" ..
+    "\nAverage Runs: " .. avg_runs ..
+    "\nTotal Runs Scored: " .. lb.total_runs
+  )
+  
   if service then service.speak("Leaderboard opened.") end
   btnLbBack.onClick = function() showSettings() end
 end
 
 function showPostMatch(result_msg)
+  stopCrowd() -- Stops crowd sound when the match is over
   changeScreen(postMatchLayout)
   saveData()
   
@@ -389,10 +420,15 @@ function showPostMatch(result_msg)
                        
   pmDetailText.setText(stats_string)
   if service then service.speak(result_msg .. ". Check screen for detailed stats.") end
+  
+  btnPlayAgain.onClick = function() showOpponentMenu() end
   btnPmMenu.onClick = function() showMainMenu() end
 end
 
 function showGame(is_resumed)
+  -- Start crowd ONLY when entering the match screen
+  startCrowd()
+
   if not is_resumed then
     score = 0 balls = 0 wickets = 0
     target = math.random(math.floor(max_balls * 1.2), math.floor(max_balls * 2.0))
@@ -483,10 +519,15 @@ end
 myDialog.show()
 showMainMenu()
 
+-- Dialogue Dismiss handles auto release logic safely 
+myDialog.setOnDismissListener(DialogInterface.OnDismissListener{
+  onDismiss = function() stopCrowd() end
+})
+
 myDialog.setOnKeyListener(DialogInterface.OnKeyListener{
   onKey = function(dialog, keyCode, event)
     if keyCode == KeyEvent.KEYCODE_0 and event.getAction() == KeyEvent.ACTION_UP then
-      if is_crowd_on and crowd_player then crowd_player.release() end
+      stopCrowd()
       myDialog.dismiss()
       return true
     end
