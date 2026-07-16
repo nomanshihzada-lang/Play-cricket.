@@ -1,1 +1,5 @@
-1.1
+1.2
+Play Cricket is an immersive, fully accessible audio cricket simulation game. Experience the thrill of the pitch with seamless screen reader support, realistic audio feedback, and dynamic gameplay mechanics.
+
+Developed By: Numan Khan
+Version: 1.0
