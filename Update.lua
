@@ -1,4 +1,4 @@
-require "import"
+Require "import"
 import "android.app.*"
 import "android.widget.*"
 import "android.view.*"
@@ -6,10 +6,11 @@ import "android.graphics.*"
 import "android.content.*"
 import "android.media.MediaPlayer"
 import "android.net.Uri"
+import "android.os.Vibrator"
 
 -- 1. ऑडियो पैथ्स (Audio Paths)
 local audio_paths = {
-  crowd = "", -- (अभी के लिए कमिंग सून)
+  crowd = "/storage/emulated/0/解说/Tools/play cricket/crowd.mp3", -- Apna crowd audio path yahan set karein
   six = "/storage/emulated/0/解说/Tools/play cricket/6 sound. .mp3",
   four = "/storage/emulated/0/解说/Tools/play cricket/4 sound.mp3",
   out = "/storage/emulated/0/解说/Tools/play cricket/out.mp3.aac",
@@ -19,22 +20,68 @@ local audio_paths = {
   dot = "/storage/emulated/0/解说/Tools/play cricket/0.mp3"
 }
 
--- 2. ग्लोबल वेरिएबल्स और स्टेट्स
+-- 2. ग्लोबल वेरिएबल्स, स्टेट्स और सेटिंग्स
 local target = 0
 local score = 0
 local balls = 0
 local wickets = 0
 local max_balls = 30
-local max_wickets = 1
+local max_wickets = 10
 
 local match_stats = {dots = 0, ones = 0, twos = 0, threes = 0, fours = 0, sixes = 0}
 local lb = {played = 0, won = 0, lost = 0, total_runs = 0}
 
--- 3. साउंड प्लेयर्स सेटअप
+-- SharedPreferences for Data Saving
+local prefs = service.getSharedPreferences("PlayCricketData_Numan", Context.MODE_PRIVATE)
+local vibrator = service.getSystemService(Context.VIBRATOR_SERVICE)
+
+-- Load Saved Data
+function loadData()
+  lb.played = prefs.getInt("played", 0)
+  lb.won = prefs.getInt("won", 0)
+  lb.lost = prefs.getInt("lost", 0)
+  lb.total_runs = prefs.getInt("total_runs", 0)
+end
+
+-- Save Data
+function saveData()
+  local editor = prefs.edit()
+  editor.putInt("played", lb.played)
+  editor.putInt("won", lb.won)
+  editor.putInt("lost", lb.lost)
+  editor.putInt("total_runs", lb.total_runs)
+  editor.apply()
+end
+
+loadData() -- App start hote hi purana data load karega
+
+-- 3. साउंड प्लेयर्स और वाइब्रेशन
 local is_crowd_on = false 
 local crowd_player = nil
 
--- हर एक्शन के लिए फ्रेश साउंड प्लेयर
+local function toggleCrowd()
+  if is_crowd_on then
+    if crowd_player then
+      crowd_player.stop()
+      crowd_player.release()
+      crowd_player = nil
+    end
+    is_crowd_on = false
+    if service then service.speak("Crowd sound turned off.") end
+  else
+    pcall(function()
+      crowd_player = MediaPlayer()
+      crowd_player.setDataSource(audio_paths.crowd)
+      crowd_player.setLooping(true)
+      crowd_player.setVolume(0.3, 0.3) -- Background volume low rakha hai
+      crowd_player.prepare()
+      crowd_player.start()
+      is_crowd_on = true
+      if service then service.speak("Crowd sound turned on.") end
+    end)
+  end
+end
+
 local function playActionSound(path)
   if path and path ~= "" then
     pcall(function()
@@ -48,6 +95,18 @@ local function playActionSound(path)
     end)
   end
 end
+
+local function doVibrate(duration)
+  if vibrator and vibrator.hasVibrator() then
+    vibrator.vibrate(duration)
+  end
+end
+
+-- Dynamic Commentary Tables
+local comm_out = {"Oh no! You are OUT!", "Clean bowled! What a delivery.", "Caught in the deep! Big wicket.", "LBW! The umpire raises his finger."}
+local comm_six = {"Massive Six! Out of the park.", "He hits it high and handsome for a six!", "What a shot, 6 runs.", "That is out of the stadium!"}
+local comm_four = {"Beautiful shot for four.", "Pierces the gap, 4 runs.", "One bounce over the rope, it's a four.", "Cracking boundary!"}
+local comm_dot = {"No run taken.", "Good delivery, dot ball.", "Played straight to the fielder."}
 
 -- 4. डायलॉग और कंटेनर सेटअप
 local dlg = AlertDialog.Builder(service)
@@ -77,10 +136,19 @@ local langLayout = {
   { Button, id="btnLangBack", text="Back", layout_width="fill", textSize="18sp" }
 }
 
+local oversLayout = {
+  LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
+  { TextView, text="Select Match Format", textSize="22sp", textColor="#000000", layout_marginBottom="30dp" },
+  { Button, id="btnT5", text="T5 (30 Balls)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnT10", text="T10 (60 Balls)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnT20", text="T20 (120 Balls)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnOversBack", text="Back", layout_width="fill", textSize="18sp" }
+}
+
 local settingsLayout = {
   LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
   { TextView, text="Settings", textSize="26sp", textColor="#000000", layout_marginBottom="30dp" },
-  { Button, id="btnToggleCrowd", text="Crowd Sound (Coming Soon)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
+  { Button, id="btnToggleCrowd", text="Toggle Crowd Sound", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
   { Button, id="btnLeaderboard", text="Leaderboard", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
   { Button, id="btnAbout", text="About", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
   { Button, id="btnSettingsBack", text="Back", layout_width="fill", textSize="18sp" }
@@ -89,7 +157,7 @@ local settingsLayout = {
 local aboutLayout = {
   LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
   { TextView, id="aboutTitle", text="About Play Cricket", textSize="26sp", textColor="#000000", layout_marginBottom="15dp" },
-  { TextView, text="Play Cricket is an immersive, fully accessible audio cricket simulation game. Experience the thrill of the pitch with seamless screen reader support, realistic audio feedback, and dynamic gameplay mechanics.\n\nDeveloped By: Numan Khan\nVersion: 1.0", textSize="16sp", textColor="#333333", layout_marginBottom="25dp", gravity="center" },
+  { TextView, text="Play Cricket is an immersive, fully accessible audio cricket simulation game. Experience the thrill of the pitch with seamless screen reader support, realistic audio feedback, and dynamic gameplay mechanics.\n\nDeveloped By: Numan Khan\nVersion: 2.0", textSize="16sp", textColor="#333333", layout_marginBottom="25dp", gravity="center" },
   { Button, id="btnYouTube", text="Social Media Support", layout_width="fill", textSize="18sp", layout_marginBottom="10dp" },
   { Button, id="btnFeedback", text="Feedback (Numan Khan)", layout_width="fill", textSize="18sp", layout_marginBottom="15dp" },
   { Button, id="btnAboutBack", text="Back to Settings", layout_width="fill", textSize="18sp" }
@@ -97,7 +165,7 @@ local aboutLayout = {
 
 local leaderboardLayout = {
   LinearLayout, orientation="vertical", layout_width="fill", layout_height="fill", padding="20dp", gravity="center",
-  { TextView, text="Leaderboard", textSize="26sp", textColor="#000000", layout_marginBottom="30dp" },
+  { TextView, text="Leaderboard (Saved)", textSize="26sp", textColor="#000000", layout_marginBottom="30dp" },
   { TextView, id="lbStatsText", text="", textSize="18sp", textColor="#333333", layout_marginBottom="30dp" },
   { Button, id="btnLbBack", text="Back to Settings", layout_width="fill", textSize="18sp" }
 }
@@ -109,11 +177,11 @@ local gameLayout = {
   { TextView, id="gameTargetText", text="Target: 0", textSize="18sp", textColor="#D32F2F", layout_marginTop="5dp" },
   { TextView, id="gameStatusText", text="Match Started!", textSize="16sp", textColor="#2E7D32", layout_marginTop="15dp", layout_marginBottom="20dp" },
   { LinearLayout, orientation="horizontal", layout_width="fill", layout_height="wrap", gravity="center", layout_marginBottom="20dp",
-    { Button, id="btnA", text="A", layout_weight="1" },
-    { Button, id="btnX", text="X", layout_weight="1" },
-    { Button, id="btnC", text="C", layout_weight="1" }
+    { Button, id="btnA", text="A (Aggressive)", layout_weight="1" },
+    { Button, id="btnX", text="X (Defend)", layout_weight="1" },
+    { Button, id="btnC", text="C (Classic)", layout_weight="1" }
   },
-  { Button, id="btnGameBack", text="Back to Menu", layout_width="fill", textSize="18sp" }
+  { Button, id="btnGameBack", text="Forfeit & Menu", layout_width="fill", textSize="18sp" }
 }
 
 local postMatchLayout = {
@@ -129,33 +197,41 @@ local function changeScreen(layout_table)
   mainContainer.addView(loadlayout(layout_table))
 end
 
-local showMainMenu, showLangMenu, showSettings, showAbout, showLeaderboard, showGame, showPostMatch
+local showMainMenu, showLangMenu, showOversMenu, showSettings, showAbout, showLeaderboard, showGame, showPostMatch
 
 function showMainMenu()
   changeScreen(mainMenuLayout)
   if mainTitle then mainTitle.getPaint().setFakeBoldText(true) end
-  
   if service then service.speak("Main Menu. Play Cricket.") end
   
   btnStartGame.onClick = function() showLangMenu() end
   btnSettings.onClick = function() showSettings() end
-  btnExit.onClick = function() myDialog.dismiss() end
+  btnExit.onClick = function() 
+    if is_crowd_on and crowd_player then crowd_player.release() end
+    myDialog.dismiss() 
+  end
 end
 
 function showLangMenu()
   changeScreen(langLayout)
-  btnLangEng.onClick = function() showGame() end
-  btnLangUrdu.onClick = function() if service then service.speak("Urdu and India commentary coming soon.") end end
+  btnLangEng.onClick = function() showOversMenu() end
+  btnLangUrdu.onClick = function() if service then service.speak("Urdu commentary coming soon.") end end
   btnLangBack.onClick = function() showMainMenu() end
+end
+
+function showOversMenu()
+  changeScreen(oversLayout)
+  if service then service.speak("Select Match Format.") end
+  
+  btnT5.onClick = function() max_balls = 30 showGame() end
+  btnT10.onClick = function() max_balls = 60 showGame() end
+  btnT20.onClick = function() max_balls = 120 showGame() end
+  btnOversBack.onClick = function() showLangMenu() end
 end
 
 function showSettings()
   changeScreen(settingsLayout)
-  
-  btnToggleCrowd.onClick = function()
-    if service then service.speak("Crowd sound is coming soon.") end
-  end
-  
+  btnToggleCrowd.onClick = function() toggleCrowd() end
   btnLeaderboard.onClick = function() showLeaderboard() end
   btnAbout.onClick = function() showAbout() end
   btnSettingsBack.onClick = function() showMainMenu() end
@@ -166,24 +242,22 @@ function showAbout()
   if aboutTitle then aboutTitle.getPaint().setFakeBoldText(true) end
   if service then service.speak("About Developer.") end
   
-  -- YouTube लिंक ओपन करने का कोड और ऐप क्लोज करना
   btnYouTube.onClick = function()
     pcall(function()
       local intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://youtube.com/@internationalcricketupdate-r1l?si=SzaPRa9-ApPxJXHL"))
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       service.startActivity(intent)
     end)
-    myDialog.dismiss() -- यहाँ से ऐप क्लोज हो जाएगी
+    myDialog.dismiss()
   end
   
-  -- Feedback (WhatsApp) ओपन करने का कोड और ऐप क्लोज करना
   btnFeedback.onClick = function()
     pcall(function()
       local intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=+923145406759&text=Hi%20Numan%20Khan,%20I%20want%20to%20give%20feedback%20about%20Play%20Cricket."))
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       service.startActivity(intent)
     end)
-    myDialog.dismiss() -- यहाँ से ऐप क्लोज हो जाएगी
+    myDialog.dismiss()
   end
   
   btnAboutBack.onClick = function() showSettings() end
@@ -192,13 +266,15 @@ end
 function showLeaderboard()
   changeScreen(leaderboardLayout)
   lbStatsText.setText("Matches Played: " .. lb.played .. "\nMatches Won: " .. lb.won .. "\nMatches Lost: " .. lb.lost .. "\nTotal Runs Scored: " .. lb.total_runs)
+  if service then service.speak("Leaderboard opened.") end
   btnLbBack.onClick = function() showSettings() end
 end
 
 function showPostMatch(result_msg)
   changeScreen(postMatchLayout)
-  pmResultText.setText(result_msg)
+  saveData() -- Game over hote hi data save ho jayega
   
+  pmResultText.setText(result_msg)
   local stats_string = "Match Stats:\n\n" ..
                        "Sixes (6s): " .. match_stats.sixes .. "\n" ..
                        "Fours (4s): " .. match_stats.fours .. "\n" ..
@@ -214,21 +290,22 @@ end
 
 function showGame()
   score = 0 balls = 0 wickets = 0
-  target = math.random(35, 75)
+  -- Dynamic Target Generation based on overs
+  target = math.random(math.floor(max_balls * 1.2), math.floor(max_balls * 2.0))
   match_stats = {dots = 0, ones = 0, twos = 0, threes = 0, fours = 0, sixes = 0}
   
   changeScreen(gameLayout)
   
   gameTargetText.setText("Target: " .. target)
   gameScoreText.setText("Score: 0/0")
-  gameBallsText.setText("Balls: 0/30")
-  gameStatusText.setText("English Commentary Started! Target is " .. target)
+  gameBallsText.setText("Balls: 0/" .. max_balls)
+  gameStatusText.setText("Match Started! Target is " .. target)
   
-  if service then service.speak("Match Started! Target is " .. target .. " runs.") end
+  if service then service.speak("Match Started! Target is " .. target .. " runs in " .. max_balls .. " balls.") end
   
   local function updateGameUI(msg)
     gameScoreText.setText("Score: " .. score .. "/" .. wickets)
-    gameBallsText.setText("Balls: " .. balls .. "/30")
+    gameBallsText.setText("Balls: " .. balls .. "/" .. max_balls)
     gameStatusText.setText(msg)
     if service then service.speak(msg .. " Score is " .. score) end
     
@@ -243,44 +320,60 @@ function showGame()
 
   local function processBall(result)
     balls = balls + 1
+    local comm_msg = ""
+    
     if result == "Wicket" then
       wickets = wickets + 1
       playActionSound(audio_paths.out)
-      updateGameUI("Oh no! You are OUT!")
+      doVibrate(600) -- Long vibration for Wicket
+      comm_msg = comm_out[math.random(1, #comm_out)]
     else
       score = score + result
       if result == 6 then 
         match_stats.sixes = match_stats.sixes + 1
         playActionSound(audio_paths.six)
+        doVibrate(200) -- Small vibration for Six
+        comm_msg = comm_six[math.random(1, #comm_six)]
       elseif result == 4 then 
         match_stats.fours = match_stats.fours + 1
         playActionSound(audio_paths.four) 
+        comm_msg = comm_four[math.random(1, #comm_four)]
       elseif result == 3 then 
         match_stats.threes = match_stats.threes + 1
         playActionSound(audio_paths.three)
+        comm_msg = "Three runs taken. Good running."
       elseif result == 2 then 
         match_stats.twos = match_stats.twos + 1
         playActionSound(audio_paths.two)
+        comm_msg = "Pushed into the gap for two."
       elseif result == 1 then 
         match_stats.ones = match_stats.ones + 1
         playActionSound(audio_paths.one)
+        comm_msg = "Just a single."
       elseif result == 0 then 
         match_stats.dots = match_stats.dots + 1 
         playActionSound(audio_paths.dot)
+        comm_msg = comm_dot[math.random(1, #comm_dot)]
       end
-      updateGameUI("You scored " .. result .. " runs.")
     end
+    updateGameUI(comm_msg)
   end
 
+  -- Button A: High Risk, High Reward (More 6s, 4s, but more Wickets)
   btnA.onClick = function()
-    local outcomes = {6, 4, "Wicket"}
+    local outcomes = {6, 6, 4, 0, "Wicket", "Wicket"}
     processBall(outcomes[math.random(1, #outcomes)])
   end
 
-  btnX.onClick = function() processBall(0) end
+  -- Button X: Defend (Singles, Dots)
+  btnX.onClick = function() 
+    local outcomes = {0, 0, 0, 1, 1}
+    processBall(outcomes[math.random(1, #outcomes)]) 
+  end
 
+  -- Button C: Classic (Balanced)
   btnC.onClick = function()
-    local outcomes = {1, 2, 3, 4, "Wicket"}
+    local outcomes = {0, 1, 2, 3, 4, 6, "Wicket"}
     processBall(outcomes[math.random(1, #outcomes)])
   end
   
@@ -294,6 +387,7 @@ showMainMenu()
 myDialog.setOnKeyListener(DialogInterface.OnKeyListener{
   onKey = function(dialog, keyCode, event)
     if keyCode == KeyEvent.KEYCODE_0 and event.getAction() == KeyEvent.ACTION_UP then
+      if is_crowd_on and crowd_player then crowd_player.release() end
       myDialog.dismiss()
       return true
     end
